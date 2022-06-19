@@ -1,0 +1,160 @@
+#include <iostream>
+#include <Windows.h>
+using namespace std;
+struct parametrs_of_thread {
+	int size_of_array;
+	int* arrayth;
+	int thread_index;
+	HANDLE stop_thread;
+	HANDLE start_thread;
+	HANDLE* terminate_or_continue;
+};
+CRITICAL_SECTION cs;
+
+DWORD WINAPI function_for_thread(LPVOID params) {
+	parametrs_of_thread info = *((parametrs_of_thread*)params);
+
+	bool end_thread = false;
+	int marked_elements = 0;
+	srand(info.thread_index);
+
+	WaitForSingleObject(info.start_thread, INFINITE);
+
+	while (!end_thread)
+	{
+		int index = rand() % info.size_of_array;
+		EnterCriticalSection(&cs);
+		if (info.arrayth[index] == 0) 
+		{
+			Sleep(5);
+			info.arrayth[index] = info.thread_index;
+			LeaveCriticalSection(&cs);
+			marked_elements++;
+			Sleep(5);
+		}
+		else 
+		{
+			cout << endl;
+
+			cout << "Поток " << info.thread_index << " пометил " << marked_elements << " элемента/ов, не может пометить элемент с индексом: " << index;
+			LeaveCriticalSection(&cs);
+			SetEvent(info.stop_thread);
+			int k = WaitForMultipleObjects(2, info.terminate_or_continue, FALSE, INFINITE) - WAIT_OBJECT_0;
+			if (k == 0) 
+			{
+				end_thread = true;
+			}
+		}
+	}
+	for (int i = 0; i < info.size_of_array; i++) 
+	{
+		if (info.arrayth[i] == info.thread_index) 
+		{
+			info.arrayth[i] = 0; 
+		}
+	}
+	return 0;
+}
+
+
+void Init_thread(HANDLE threads[], parametrs_of_thread thread_info[], bool terminated_threads[], HANDLE start_work, HANDLE stopped_threads[], int array[], int size, int threads_number)
+{
+	for (int i = 0; i < threads_number; ++i) 
+	{
+		thread_info[i].arrayth = array;
+		thread_info[i].size_of_array = size;
+		thread_info[i].thread_index = i + 1;
+		thread_info[i].start_thread = start_work;
+
+		stopped_threads[i] = thread_info[i].stop_thread = CreateEvent(NULL, TRUE, FALSE, NULL);
+		thread_info[i].terminate_or_continue = new HANDLE[2];
+		thread_info[i].terminate_or_continue[0] = CreateEvent(NULL, FALSE, FALSE, NULL);
+		thread_info[i].terminate_or_continue[1] = CreateEvent(NULL, FALSE, FALSE, NULL);
+		threads[i] = CreateThread(NULL, 0, function_for_thread, (LPVOID)(&thread_info[i]), NULL, NULL);
+		terminated_threads[i] = false;
+	}
+}
+
+int main() {
+	setlocale(LC_ALL, ".1251");
+	InitializeCriticalSection(&cs);
+	int size;
+	cout << "Введите размер массива ";
+	cin >> size;
+	int* array = new int[size] {};
+	cout << "Введите количество маркеров ";
+	int threads_number;
+	cin >> threads_number;
+
+	HANDLE* threads = new HANDLE[threads_number];
+	parametrs_of_thread* thread_info = new parametrs_of_thread[threads_number];
+	bool* terminated_threads = new bool[threads_number];
+	HANDLE start_thread = CreateEvent(NULL, TRUE, FALSE, NULL);
+	HANDLE* stopped_threads = new HANDLE[threads_number];
+
+
+	Init_thread(threads, thread_info, terminated_threads, start_thread, stopped_threads, array, size, threads_number);
+	SetEvent(start_thread);
+
+	int ended_threads = 0;
+
+	while (ended_threads != threads_number) {
+		WaitForMultipleObjects(threads_number, stopped_threads, TRUE, INFINITE);
+		cout << endl;
+		for (int i = 0; i < size; i++)
+		{
+			cout << array[i] << " ";
+		}
+		cout << endl;
+		bool is_thread_terminated = false;
+		while (!is_thread_terminated) 
+		{
+			int thread_to_terminate_ind;
+			cout << "Введите индекс потока ";
+			cin >> thread_to_terminate_ind;
+			thread_to_terminate_ind--;
+			if (thread_to_terminate_ind >= threads_number || thread_to_terminate_ind < 0) 
+			{
+				cout << "Потоков с данным индексом не найдено :(" << endl;
+				continue;
+			}
+			if (terminated_threads[thread_to_terminate_ind]) 
+			{
+				cout << "Поток завершил работу" << endl;
+			}
+			else
+			{
+				SetEvent(thread_info[thread_to_terminate_ind].terminate_or_continue[0]);
+				WaitForSingleObject(threads[thread_to_terminate_ind], INFINITE);
+				for (int i = 0; i < size; i++)
+				{
+					cout << array[i] << " ";
+				}
+				cout << endl;
+				terminated_threads[thread_to_terminate_ind] = true;
+				is_thread_terminated = true;
+				ended_threads++;
+			}
+		}
+		for (int j = 0; j < threads_number; ++j)
+		{
+			if (!terminated_threads[j]) 
+			{
+				ResetEvent(thread_info[j].stop_thread);
+				SetEvent(thread_info[j].terminate_or_continue[1]);
+			}
+		}
+
+	}
+	cout << "Работа потоков завершена" << endl;
+	CloseHandle(start_thread);
+
+	for (int i = 0; i < threads_number; ++i) {
+		CloseHandle(threads[i]);
+		CloseHandle(stopped_threads[i]);
+		CloseHandle(thread_info[i].terminate_or_continue[0]);
+		CloseHandle(thread_info[i].terminate_or_continue[1]);
+	}
+
+	DeleteCriticalSection(&cs);
+	return 0;
